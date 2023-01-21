@@ -3,7 +3,8 @@ import { WebSocketServer } from 'ws';
 const SIGNAL_TYPES = {
   ROLE: 0,
   ICE_CANDIDATE: 1,
-  SESSION_DESCRIPTION: 2, 
+  SESSION_DESCRIPTION: 2,
+  CHANNEL_ESTABLISHED: 3, // debug only
 }
 
 export const delayQueue = (A, B) => {
@@ -21,10 +22,10 @@ export const delayQueue = (A, B) => {
 export const server = function () {
   let cons = 0;
   let rejects = 0;
-  const queue = delayQueue(0, 1000);
+  const queue = delayQueue(0, 100);
   const buffer = [];
   const wss = new WebSocketServer({
-    port: 8080,
+    port: 8082,
   });
 
   const match = function (a) {
@@ -73,7 +74,7 @@ export const server = function () {
     socket.isAlive = true;
   }
   
-  const interval = setInterval(function ping() {
+  const interval = setInterval(function () {
     for (const socket of wss.clients) {
       if (socket.isAlive === false) {
         rejects++;
@@ -82,7 +83,7 @@ export const server = function () {
   
       socket.isAlive = false;
     }
-  }, 1100);
+  }, 30000);
   
   wss.on('close', function close() {
     clearInterval(interval);
@@ -100,8 +101,9 @@ export const server = function () {
     promise
       .then(function () {
         const signal = new Uint8Array(2);
-        signal[0] = SIGNAL_TYPES.ROLE;
-        signal[1] = socket.role;
+        const view = new DataView(signal.buffer);
+        view.setUint8(0, SIGNAL_TYPES.ROLE, true);
+        view.setUint8(1, socket.role, true);
         socket.send(signal);
       })
       .catch(function () {
@@ -110,15 +112,14 @@ export const server = function () {
       });
 
     socket.on('message', function message(signal) {
-      const type = signal[0];
-      if (signal[0] === SIGNAL_TYPES.ICE_CANDIDATE || signal[0] === SIGNAL_TYPES.SESSION_DESCRIPTION) {
-          promise.then(function () {
-            socket.peer.send(signal);
-          })
-          heartbeat(socket)
-          if (signal[0] === SIGNAL_TYPES.SESSION_DESCRIPTION) {
-            cons++;
-          }
+      const signalType = new DataView(Uint8Array.from(signal).buffer).getUint8(0, true);
+      if (signalType === SIGNAL_TYPES.ICE_CANDIDATE || signalType === SIGNAL_TYPES.SESSION_DESCRIPTION) {
+        promise.then(function () {
+          socket.peer.send(signal);
+        });
+        heartbeat(socket);
+      } else if (signalType === SIGNAL_TYPES.CHANNEL_ESTABLISHED) {
+        cons++;
       } else {
         socket.close();
       }
@@ -142,7 +143,7 @@ export const server = function () {
     console.log('+' + (cons - cons2), -(rejects - rejects2), buffer.length);
     cons2 = cons;
     rejects2 = rejects; 
-  }, 2000);
+  }, 1000);
 }
 
 server();
